@@ -1,14 +1,15 @@
 import time
-from urllib.parse import urljoin
+from datetime import datetime, timezone
+from urllib.parse import urljoin, urlparse
 import requests
 import os
 from bs4 import BeautifulSoup
 
 BASE_URL="https://books.toscrape.com/catalogue/page-1.html"
-USER_AGENT = "FlyRankInternship-A9/1.0 (https://github.com/MahirAhammed/test-scraper.git)"
+USER_AGENT = "FlyRankInternship-A9/1.0 (+https://github.com/MahirAhammed/test-scraper.git)"
 CACHE_DIR = "cache"
 
-def fetch_page(url: str, filename: str) -> tuple[str, bool]:
+def fetch_page(url: str, filename: str) -> str:
     """
     Fetches a page from the given URL and caches it locally, or returns the cached version.
     """
@@ -19,7 +20,7 @@ def fetch_page(url: str, filename: str) -> tuple[str, bool]:
         with open(file, "r", encoding= "utf-8") as f:
             content = f.read()
         print(f"CACHE HIT: {file} ({len(content)} bytes)")
-        return content, True
+        return content
 
     response = requests.get(url, headers= {"User-Agent": USER_AGENT}, timeout= 10)
     if response.status_code != 200:
@@ -29,18 +30,18 @@ def fetch_page(url: str, filename: str) -> tuple[str, bool]:
         f.write(response.text)
 
     print(f"FETCH: {file} ({len(response.text)} bytes)")
-    return response.text, False
+    time.sleep(0.5)
+    return response.text
 
 
-def get_book_links(content: str, page_url: str) -> list[str]:
+def get_book_links(content: str, page_url: str) -> list[tuple[str, str]]:
     """
     Extracts all book links from the given HTML content.
     """
     soup = BeautifulSoup(content, "html.parser")
     links = []
     for a in soup.select("article.product_pod h3 a"):
-        links.append(urljoin(page_url, a["href"]))
-
+        links.append((urljoin(page_url, a["href"]), page_url))
     return links
 
 
@@ -55,7 +56,7 @@ def get_next_page_link(content: str, page_url: str) -> str | None:
     return None
 
 
-def fetch_all_records(limit: int = 3) -> list[str]:
+def fetch_all_records(limit: int = 3) -> list[tuple[str, str]]:
     """
     Fetches and extracts the content of all catalogue pages up to the specified limit.
     """
@@ -65,10 +66,7 @@ def fetch_all_records(limit: int = 3) -> list[str]:
 
     while current_url and current_page <= limit:
         filename = f"page-{current_page}.html"
-        content, is_cached = fetch_page(current_url, f"catalogue-{filename}")
-
-        if not is_cached:
-            time.sleep(0.5)
+        content = fetch_page(current_url, f"catalogue-{filename}")
 
         book_links.extend(get_book_links(content, current_url))
         current_url = get_next_page_link(content, current_url)
@@ -78,9 +76,52 @@ def fetch_all_records(limit: int = 3) -> list[str]:
 
     print(f"catalogue_pages={current_page - 1} , discovered= {len(book_links)} , unique_urls={len(unique_book_links)}")
     return unique_book_links
-      
+
+
+def fetch_all_books(book_urls: list[tuple[str, str]]) -> dict:
+    """
+    Fetches and extracts the content of all book pages from the given list of URLs."""
+    records = []
+    for url, source_page in book_urls:
+        filename = urlparse(url).path.rsplit("/")[-2] + ".html"
+        content = fetch_page(url, f"book-{filename}")
+        fetched_at = datetime.fromtimestamp(os.path.getmtime(f"{CACHE_DIR}/book-{filename}"), tz=timezone.utc).isoformat()
+
+        records.append(extract_book_details(content, url, source_page, fetched_at))
+
+    print(records[0])
+    print(f"detail_pages={len(book_urls)}")
+    return records
+
+
+def extract_book_details(content: str, url: str, source_page: str, fetched_at: str) -> dict:
+    soup = BeautifulSoup(content, "html.parser")
+    product = soup.select_one("div.product_main")
+    title = product.select_one("h1").text.strip()
+    price_text = product.select_one("p.price_color").text.strip()
+    available_text = product.select_one("p.availability").text.strip()
+    rating_text = product.select_one("p.star-rating")["class"][1]
+
+    description = None
+    has_description = soup.select_one("#product_description")
+    if has_description and has_description.find_next_sibling("p"):
+        description = has_description.find_next_sibling("p").text.strip()
+
+    return {
+        "title": title,
+        "product_url": url,
+        "price_text": price_text,
+        "availability_text": available_text,
+        "rating_text": rating_text,
+        "description": description,
+        "source_page": source_page,
+        "fetched_at": fetched_at
+    }
+
+
 def main():
-    fetch_all_records(limit= 3)
+    books = fetch_all_records(limit= 3)
+    fetch_all_books(books)
 
 if __name__ == "__main__":
     main()
