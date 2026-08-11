@@ -4,6 +4,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 import os
 from bs4 import BeautifulSoup
+from validate import validate_records, write_output
 
 BASE_URL="https://books.toscrape.com/catalogue/page-1.html"
 USER_AGENT = "FlyRankInternship-A9/1.0 (+https://github.com/MahirAhammed/test-scraper.git)"
@@ -26,6 +27,7 @@ def fetch_page(url: str, filename: str) -> str:
     if response.status_code != 200:
         raise RuntimeError(f"Fetch failed {url}: status {response.status_code}")
 
+    response.encoding = "utf-8"
     with open(file, "w", encoding= "utf-8") as f:
         f.write(response.text)
 
@@ -85,7 +87,7 @@ def fetch_all_books(book_urls: list[tuple[str, str]]) -> dict:
     for url, source_page in book_urls:
         filename = urlparse(url).path.rsplit("/")[-2] + ".html"
         content = fetch_page(url, f"book-{filename}")
-        fetched_at = datetime.fromtimestamp(os.path.getmtime(f"{CACHE_DIR}/book-{filename}"), tz=timezone.utc).isoformat()
+        fetched_at = datetime.fromtimestamp(os.path.getmtime(f"{CACHE_DIR}/book-{filename}"), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         records.append(extract_book_details(content, url, source_page, fetched_at))
 
@@ -95,6 +97,8 @@ def fetch_all_books(book_urls: list[tuple[str, str]]) -> dict:
 
 
 def extract_book_details(content: str, url: str, source_page: str, fetched_at: str) -> dict:
+    """
+    Extracts the details of a book from the given HTML content."""
     soup = BeautifulSoup(content, "html.parser")
     product = soup.select_one("div.product_main")
     title = product.select_one("h1").text.strip()
@@ -121,7 +125,10 @@ def extract_book_details(content: str, url: str, source_page: str, fetched_at: s
 
 def main():
     books = fetch_all_records(limit= 3)
-    fetch_all_books(books)
+    raw_records = fetch_all_books(books)
+    valid, invalid = validate_records(raw_records)
+    print(f"valid_records={len(valid)} , invalid_records={len(invalid)}")
+    write_output(valid, invalid)
 
 if __name__ == "__main__":
     main()
